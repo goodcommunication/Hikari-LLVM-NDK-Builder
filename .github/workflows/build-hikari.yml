@@ -55,7 +55,6 @@ jobs:
           cmake --version
           ninja --version
 
-      # 仅修改这一步：强制忽略cmake返回值，确保走到编译插件步骤
       - name: Configure LLVM
         run: |
           cd llvm-project
@@ -76,19 +75,33 @@ jobs:
             -DLLVM_ENABLE_LIBXML2=OFF ^
             -DLLVM_ENABLE_ZLIB=OFF ^
             ..\llvm
-          # 核心修改：强制exit 0，忽略cmake的错误返回值
           exit 0
 
+      # 仅修改这一步：新增目录树打印，排查插件实际位置
       - name: Build Obfuscation Plugin
         run: |
           cd llvm-project\build
           ninja Obfuscation
+          :: 打印完整的lib目录树（所有文件路径），定位插件位置
+          dir /s /b lib\*
+          :: 多维度检查插件文件（适配不同文件名/路径）
           if exist "lib\Obfuscation.dll" (
-            echo SUCCESS: Obfuscation.dll built!
-            dir lib\
+            echo SUCCESS: Obfuscation.dll 生成在 lib\ 根目录！
+            dir lib\Obfuscation.dll
+            exit 0
+          ) else if exist "lib\Obfuscation.lib" (
+            echo SUCCESS: Obfuscation.lib 生成在 lib\ 根目录！
+            dir lib\Obfuscation.lib
+            exit 0
+          ) else if exist "lib\Transforms\Obfuscation\Obfuscation.dll" (
+            echo SUCCESS: Obfuscation.dll 生成在 lib\Transforms\Obfuscation\ 子目录！
+            dir lib\Transforms\Obfuscation\Obfuscation.dll
+            exit 0
+          ) else if exist "lib\Transforms\Obfuscation\Obfuscation.lib" (
+            echo SUCCESS: Obfuscation.lib 生成在 lib\Transforms\Obfuscation\ 子目录！
+            dir lib\Transforms\Obfuscation\Obfuscation.lib
             exit 0
           ) else (
-            echo ERROR: Obfuscation.dll not found!
-            dir lib\
+            echo ERROR: 未找到 Obfuscation 插件文件！
             exit 1
           )

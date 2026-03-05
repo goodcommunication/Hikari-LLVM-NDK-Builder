@@ -8,13 +8,12 @@ on:
         required: true
         default: 'r27d'
       llvm_version:
-        description: 'LLVM Version (适配Hikari主仓库)'
+        description: 'LLVM Version (适配Hikari-LLVM19仓库)'
         required: true
-        default: '18'
+        default: '19'
         type: choice
         options:
-          - '18'
-          - '20'
+          - '19'  # 仅保留该仓库适配的LLVM版本
 
 jobs:
   build:
@@ -22,20 +21,15 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      # 修复1：拉取完整仓库（不指定分支，避免分支名称错误）+ cmd正确语法
-      - name: Checkout Hikari-LLVM (完整仓库+无分支限制)
+      # 修复1：拉取有效源码仓库（包含CMakeLists.txt）
+      - name: Checkout Hikari-LLVM (有效源码仓库)
         run: |
-          :: 拉取完整仓库（不指定分支，获取所有文件），取消浅克隆
-          git clone https://github.com/HikariObfuscator/Hikari.git hikari
-          :: 进入源码目录，查看所有文件（确认是否有CMakeLists.txt）
-          cd hikari
-          dir
-          :: 返回到工作根目录
-          cd ..
-          :: 校验核心文件，若缺失则提示（但继续构建，避免直接终止）
+          :: 拉取适配LLVM19的Hikari仓库，取消浅克隆确保文件完整
+          git clone https://github.com/Aethereux/Hikari-LLVM19.git hikari
+          :: 验证核心编译文件是否存在（确保拉取成功）
           if not exist "hikari/CMakeLists.txt" (
-            echo 警告：未找到CMakeLists.txt，尝试从仓库根目录查找
-            dir
+            echo 错误：未找到CMakeLists.txt，源码拉取失败
+            exit 1
           )
         shell: cmd
 
@@ -49,15 +43,14 @@ jobs:
           ninja --version
         shell: cmd
 
-      # 修复2：彻底解决cmd续行符+路径+线程数问题
-      - name: Build Hikari-LLVM (适配cmd语法+容错路径)
+      # 修复2：cmd续行符+绝对路径+低线程数（适配Windows环境）
+      - name: Build Hikari-LLVM (语法/路径修复)
         run: |
-          :: 切换到GitHub工作根目录（绝对路径，避免相对路径错误）
+          :: 切换到GitHub工作根目录，避免相对路径错误
           cd %GITHUB_WORKSPACE%
-          :: 创建build目录
           mkdir build
           cd build
-          :: CMake命令（cmd续行符用^，优先用绝对路径，容错相对路径）
+          :: CMake命令（cmd续行符用^，绝对路径定位源码）
           cmake -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^
@@ -67,17 +60,8 @@ jobs:
             -DLLVM_INCLUDE_DOCS=OFF ^
             -DLLVM_ENABLE_NEW_PASS_MANAGER=ON ^
             -DLLVM_ENABLE_ASSERTIONS=OFF ^
-            %GITHUB_WORKSPACE%/hikari || cmake -G Ninja ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^
-            -DLLVM_ENABLE_PROJECTS="clang" ^
-            -DLLVM_INCLUDE_TESTS=OFF ^
-            -DLLVM_INCLUDE_EXAMPLES=OFF ^
-            -DLLVM_INCLUDE_DOCS=OFF ^
-            -DLLVM_ENABLE_NEW_PASS_MANAGER=ON ^
-            -DLLVM_ENABLE_ASSERTIONS=OFF ^
-            ../hikari
-          :: 降低线程数，避免资源耗尽
+            %GITHUB_WORKSPACE%/hikari
+          :: 降低线程数，适配GitHub服务器资源
           ninja -j2
         shell: cmd
 
@@ -92,27 +76,25 @@ jobs:
           $ndkPath = "android-ndk-${{ github.event.inputs.ndk_version }}"
           $llvmPath = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64"
           
-          # Backup original files
+          # 备份原始文件
           Copy-Item -Path "$llvmPath/bin" -Destination "$llvmPath/bin_original" -Recurse
           
-          # Copy Hikari binaries (容错：若build/bin不存在则提示)
+          # 复制Hikari编译产物（容错校验）
           if (Test-Path "build/bin") {
             Copy-Item -Path "build/bin/clang.exe" -Destination "$llvmPath/bin/" -Force
             Copy-Item -Path "build/bin/clang++.exe" -Destination "$llvmPath/bin/" -Force
             Copy-Item -Path "build/bin/clang-cl.exe" -Destination "$llvmPath/bin/" -Force
             Copy-Item -Path "build/bin/clang-format.exe" -Destination "$llvmPath/bin/" -Force
           } else {
-            Write-Host "警告：build/bin目录不存在，跳过二进制文件复制"
+            Write-Host "警告：build/bin目录不存在，编译可能失败"
           }
           
-          # Copy LLVM libraries (容错)
+          # 复制LLVM库文件
           if (Test-Path "build/lib") {
             Copy-Item -Path "build/lib/*.lib" -Destination "$llvmPath/lib/" -Force -ErrorAction SilentlyContinue
-          } else {
-            Write-Host "警告：build/lib目录不存在，跳过库文件复制"
           }
           
-          # Compress NDK
+          # 打包NDK
           Compress-Archive -Path $ndkPath -DestinationPath "hikari-llvm${{ github.event.inputs.llvm_version }}-ndk-${{ github.event.inputs.ndk_version }}-windows.zip"
         shell: powershell
 

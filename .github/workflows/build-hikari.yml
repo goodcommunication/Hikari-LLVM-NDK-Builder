@@ -94,5 +94,3 @@ target_link_libraries(Obfuscation
             ..\llvm
           if errorlevel 1 exit 1
           echo LLVM configure passed!
-
-      # 先不编译插件，先确保CMake能过

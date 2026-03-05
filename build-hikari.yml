@@ -38,22 +38,22 @@ jobs:
 
 
       - name: Build Hikari-LLVM
-        run: |
-          echo "开始编译 Hikari-LLVM，NDK版本=${{ github.event.inputs.ndk_version }}, LLVM版本=${{ github.event.inputs.llvm_version }}"
-          mkdir build
-          cd build
-          cmake -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" `
-            -DLLVM_ENABLE_PROJECTS="clang" `
-            -DLLVM_INCLUDE_TESTS=OFF `
-            -DLLVM_INCLUDE_EXAMPLES=OFF `
-            -DLLVM_INCLUDE_DOCS=OFF `
-            -DLLVM_ENABLE_NEW_PASS_MANAGER=ON `
-            -DLLVM_ENABLE_ASSERTIONS=OFF `
-            ../hikari `
-          ninja -j2
-        shell: cmd
+  run: |
+    echo "开始编译 Hikari-LLVM，NDK版本=${{ github.event.inputs.ndk_version }}, LLVM版本=${{ github.event.inputs.llvm_version }}"
+    mkdir build
+    cd build
+    cmake -G Ninja ^
+      -DCMAKE_BUILD_TYPE=Release ^
+      -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^
+      -DLLVM_ENABLE_PROJECTS="clang" ^
+      -DLLVM_INCLUDE_TESTS=OFF ^
+      -DLLVM_INCLUDE_EXAMPLES=OFF ^
+      -DLLVM_INCLUDE_DOCS=OFF ^
+      -DLLVM_ENABLE_NEW_PASS_MANAGER=ON ^
+      -DLLVM_ENABLE_ASSERTIONS=OFF ^
+      ../hikari
+    ninja -j2  # 降低线程数，避免资源耗尽
+  shell: cmd
 
         
       - name: Download Android NDK

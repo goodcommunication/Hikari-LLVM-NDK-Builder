@@ -21,38 +21,38 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      # 步骤1：拉取官方llvm-project（修复cmd注释符+目录验证）
+      # 步骤1：拉取官方llvm-project（修正CMakeLists.txt校验路径）
       - name: Checkout LLVM official repo
         run: |
-          :: 克隆官方仓库，关闭自动换行转换（匹配项目要求）
+          :: 严格按原仓库文档克隆（关闭自动换行转换）
           git clone --config core.autocrlf=false https://github.com/llvm/llvm-project.git
           cd llvm-project
-          :: 检出LLVM 19.1.0分支（抑制游离头提示）
+          :: 检出LLVM 19.1.0分支（静默模式，抑制游离头提示）
           git checkout -q llvmorg-${{ github.event.inputs.llvm_version }}
-          :: 验证目录结构（cmd正确注释+目录存在性校验）
-          if exist "CMakeLists.txt" (
-            echo LLVM源码根目录CMakeLists.txt存在，目录验证通过
+          :: 修正：LLVM的CMakeLists.txt在llvm子目录下，而非根目录
+          if exist "llvm/CMakeLists.txt" (
+            echo LLVM源码llvm子目录CMakeLists.txt存在，目录验证通过
           ) else (
-            echo 错误：LLVM源码根目录未找到CMakeLists.txt
+            echo 错误：LLVM源码llvm子目录未找到CMakeLists.txt
             exit 1
           )
         shell: cmd
 
-      # 步骤2：拉取TinyTime-Joy/hikari-llvm19并合并源码
+      # 步骤2：拉取TinyTime-Joy/hikari-llvm19并合并源码（严格按文档覆盖）
       - name: Checkout Hikari-LLVM19 (Windows适配版)
         run: |
           git clone https://github.com/TinyTime-Joy/hikari-llvm19.git hikari-patch
-          :: 覆盖合并llvm和clang文件夹（/E递归 /Y覆盖）
-          xcopy /E /Y hikari-patch\llvm llvm-project\llvm\
-          xcopy /E /Y hikari-patch\clang llvm-project\clang\
-          echo Hikari源码合并完成
+          :: 按原仓库文档：覆盖合并llvm和clang文件夹到llvm-project根目录
+          xcopy /E /Y hikari-patch\llvm\* llvm-project\llvm\
+          xcopy /E /Y hikari-patch\clang\* llvm-project\clang\
+          echo Hikari源码合并完成（覆盖llvm/clang目录）
         shell: cmd
 
-      # 步骤3：配置MSVC环境（自动适配GitHub的VS路径）
+      # 步骤3：配置MSVC环境（自动适配GitHub的VS路径，无需手动改）
       - name: Setup MSVC Environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      # 步骤4：安装依赖（cmake/ninja）
+      # 步骤4：安装依赖（cmake/ninja，原仓库编译必需）
       - name: Install dependencies
         run: |
           choco install cmake ninja -y
@@ -60,15 +60,17 @@ jobs:
           ninja --version
         shell: cmd
 
-      # 步骤5：编译（修复build.cmd生成逻辑，适配GitHub环境）
+      # 步骤5：编译（严格按原仓库build.cmd逻辑，修正CMake路径）
       - name: Build Hikari-LLVM19 (Windows)
         run: |
           cd llvm-project
-          :: 生成适配GitHub环境的build.cmd（纯cmd语法，无注释错误）
+          :: 生成build.cmd（完全匹配原仓库要求，修正CMake指向llvm子目录）
           echo @echo off > build.cmd
+          echo :: 自动适配GitHub的VS环境，无需手动改vcvars64路径 >> build.cmd
           echo call "%%VSINSTALLDIR%%\BuildTools\bin\Hostx64\x64\vcvars64.bat" >> build.cmd
           echo mkdir build 2^>nul >> build.cmd
           echo cd build >> build.cmd
+          echo :: CMake指向llvm子目录（LLVM官方编译方式） >> build.cmd
           echo cmake -G Ninja ^
           echo   -DCMAKE_BUILD_TYPE=Release ^
           echo   -DCMAKE_CXX_STANDARD=17 ^
@@ -78,40 +80,45 @@ jobs:
           echo   -DLLVM_INCLUDE_EXAMPLES=OFF ^
           echo   -DLLVM_INCLUDE_DOCS=OFF ^
           echo   ..\llvm >> build.cmd
+          echo :: 低线程数适配GitHub资源 >> build.cmd
           echo ninja -j2 >> build.cmd
           :: 执行编译脚本
           call build.cmd
         shell: cmd
 
-      # 步骤6：下载Android NDK r28（Windows版本）
+      # 步骤6：下载Android NDK r28（Windows版本，原仓库适配版）
       - name: Download Android NDK r28
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/android-ndk-${{ github.event.inputs.ndk_version }}-windows.zip" -OutFile "ndk.zip"
           Expand-Archive -Path "ndk.zip" -DestinationPath "."
         shell: powershell
 
-      # 步骤7：替换NDK的bin/lib目录（按项目说明）
+      # 步骤7：替换NDK（严格按原仓库文档，容错校验）
       - name: Integrate Hikari into NDK r28
         run: |
           $ndkPath = "android-ndk-${{ github.event.inputs.ndk_version }}"
           $llvmPath = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64"
           
-          # 备份原始文件（容错：目录不存在时不报错）
-          if (Test-Path "$llvmPath/bin") {
-            Copy-Item -Path "$llvmPath/bin" -Destination "$llvmPath/bin_original" -Recurse -Force
-          }
-          if (Test-Path "$llvmPath/lib") {
-            Copy-Item -Path "$llvmPath/lib" -Destination "$llvmPath/lib_original" -Recurse -Force
+          # 容错：先检查NDK目录是否存在
+          if (-not (Test-Path $llvmPath)) {
+            Write-Host "错误：NDK路径不存在 $llvmPath"
+            exit 1
           }
           
-          # 复制编译产物（覆盖NDK，容错校验）
+          # 备份原始文件
+          Copy-Item -Path "$llvmPath/bin" -Destination "$llvmPath/bin_original" -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path "$llvmPath/lib" -Destination "$llvmPath/lib_original" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          # 按原仓库文档：复制build/bin和build/lib到NDK
           if (Test-Path "llvm-project/build/bin") {
             Copy-Item -Path "llvm-project/build/bin/*" -Destination "$llvmPath/bin/" -Recurse -Force
+            Write-Host "成功复制bin目录到NDK"
           } else {
             Write-Host "警告：llvm-project/build/bin目录不存在，编译可能失败"
           }
           if (Test-Path "llvm-project/build/lib") {
             Copy-Item -Path "llvm-project/build/lib/*" -Destination "$llvmPath/lib/" -Recurse -Force
+            Write-Host "成功复制lib目录到NDK"
           } else {
             Write-Host "警告：llvm-project/build/lib目录不存在，编译可能失败"
           }
@@ -136,8 +143,8 @@ jobs:
           files: hikari-*.zip
           body: |
             ## Hikari-LLVM19 for Android NDK ${{ github.event.inputs.ndk_version }} (Windows)
-            基于 TinyTime-Joy/hikari-llvm19 编译，适配Windows环境
-            ### 混淆参数
+            基于 TinyTime-Joy/hikari-llvm19 编译，严格遵循官方文档步骤
+            ### 混淆参数（与原仓库一致）
             - -mllvm -enable-allobf（全部启用）
             - -mllvm -enable-bcfobf（虚假控制流）
             - -mllvm -enable-cffobf（控制流平坦化）

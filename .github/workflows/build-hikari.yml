@@ -36,31 +36,31 @@ jobs:
           if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" exit 1
           echo Hikari patch merged.
 
-      # 核心修复：用PowerShell生成标准格式的CMake文件
+      # 核心修复：PowerShell生成CMake，严格对齐缩进
       - name: Generate CMakeLists.txt (PowerShell)
         shell: powershell
         run: |
           $cmake = @"
-add_llvm_pass_plugin(Obfuscation
-  Obfuscation.cpp
-  BogusControlFlow.cpp
-  ControlFlowFlattening.cpp
-  StringEncryption.cpp
-  Substitute.cpp
-  Utils.cpp
-  SplitBasicBlocks.cpp
-  IndirectBranch.cpp
-  FunctionWrapper.cpp
-)
+    add_llvm_pass_plugin(Obfuscation
+      Obfuscation.cpp
+      BogusControlFlow.cpp
+      ControlFlowFlattening.cpp
+      StringEncryption.cpp
+      Substitute.cpp
+      Utils.cpp
+      SplitBasicBlocks.cpp
+      IndirectBranch.cpp
+      FunctionWrapper.cpp
+    )
 
-target_link_libraries(Obfuscation
-  PRIVATE
-  LLVMIRReader
-  LLVMCore
-  LLVMSupport
-  LLVMTransformUtils
-  LLVMAnalysis
-)
+    target_link_libraries(Obfuscation
+      PRIVATE
+      LLVMIRReader
+      LLVMCore
+      LLVMSupport
+      LLVMTransformUtils
+      LLVMAnalysis
+    )
 "@
           $path = "llvm-project/llvm/lib/Transforms/Obfuscation/CMakeLists.txt"
           Set-Content -Path $path -Value $cmake -Encoding UTF8
@@ -100,9 +100,9 @@ target_link_libraries(Obfuscation
           cd llvm-project\build
           ninja Obfuscation
           dir /s /b lib\*
-          if exist "lib/Transforms/Obfuscation/Obfuscation.lib" (
+          if exist "lib\Transforms\Obfuscation\Obfuscation.lib" (
             echo SUCCESS: Obfuscation.lib built!
-            dir lib/Transforms/Obfuscation/Obfuscation.lib
+            dir lib\Transforms\Obfuscation\Obfuscation.lib
             exit 0
           ) else (
             echo ERROR: Obfuscation plugin not found!

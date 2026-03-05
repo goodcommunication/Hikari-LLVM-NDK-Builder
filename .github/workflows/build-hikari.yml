@@ -1,10 +1,10 @@
-name: Build Hikari-LLVM19 for Android NDK r28 (Windows)
+name: Build Hikari-LLVM19 (Plugin Mode) for Android NDK r28
 
 on:
   workflow_dispatch:
     inputs:
       ndk_version:
-        description: 'Android NDK Version (适配r28)'
+        description: 'Android NDK Version'
         required: true
         default: 'r28'
       llvm_version:
@@ -18,41 +18,82 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 180 # 插件模式编译更快，缩短超时时间
     
     steps:
-      # 步骤1：拉取官方llvm-project（修正CMakeLists.txt校验路径）
+      # 步骤1：拉取官方LLVM源码
       - name: Checkout LLVM official repo
         run: |
-          :: 严格按原仓库文档克隆（关闭自动换行转换）
           git clone --config core.autocrlf=false https://github.com/llvm/llvm-project.git
           cd llvm-project
-          :: 检出LLVM 19.1.0分支（静默模式，抑制游离头提示）
           git checkout -q llvmorg-${{ github.event.inputs.llvm_version }}
-          :: 修正：LLVM的CMakeLists.txt在llvm子目录下，而非根目录
+          # 验证llvm子目录存在
           if exist "llvm/CMakeLists.txt" (
-            echo LLVM源码llvm子目录CMakeLists.txt存在，目录验证通过
+            echo LLVM源码目录验证通过
           ) else (
-            echo 错误：LLVM源码llvm子目录未找到CMakeLists.txt
+            echo 错误：LLVM源码目录不存在
             exit 1
           )
         shell: cmd
 
-      # 步骤2：拉取TinyTime-Joy/hikari-llvm19并合并源码（严格按文档覆盖）
-      - name: Checkout Hikari-LLVM19 (Windows适配版)
+      # 步骤2：拉取Hikari补丁并合并
+      - name: Checkout Hikari-LLVM19
         run: |
           git clone https://github.com/TinyTime-Joy/hikari-llvm19.git hikari-patch
-          :: 按原仓库文档：覆盖合并llvm和clang文件夹到llvm-project根目录
+          # 合并llvm/clang补丁
           xcopy /E /Y hikari-patch\llvm\* llvm-project\llvm\
           xcopy /E /Y hikari-patch\clang\* llvm-project\clang\
-          echo Hikari源码合并完成（覆盖llvm/clang目录）
+          echo Hikari补丁合并完成
         shell: cmd
 
-      # 步骤3：配置MSVC环境（自动适配GitHub的VS路径，无需手动改）
+      # 步骤3：自动生成插件模式的CMakeLists.txt（核心！替代手动修改）
+      - name: Generate Obfuscation Plugin CMakeLists.txt
+        run: |
+          # 定义CMakeLists.txt内容（插件模式）
+          set CMAKE_CONTENT=add_llvm_pass_plugin(Obfuscation^
+  Obfuscation.cpp^
+  BogusControlFlow.cpp^
+  ControlFlowFlattening.cpp^
+  StringEncryption.cpp^
+  Substitute.cpp^
+  Utils.cpp^
+  SplitBasicBlocks.cpp^
+  IndirectBranch.cpp^
+  FunctionWrapper.cpp^
+)^
+^
+target_link_libraries(Obfuscation^
+  PRIVATE^
+  LLVMIRReader^
+  LLVMCore^
+  LLVMSupport^
+  LLVMTransformUtils^
+  LLVMAnalysis^
+)^
+^
+if (WIN32)^
+  set_target_properties(Obfuscation PROPERTIES^
+    LINK_FLAGS "/DELAYLOAD:llvm-c.dll"^
+    SUFFIX ".dll"^
+  )^
+endif()
+          
+          # 将内容写入Obfuscation的CMakeLists.txt（覆盖原有文件）
+          echo %CMAKE_CONTENT% > llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
+          # 验证文件生成成功
+          if exist "llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt" (
+            echo Obfuscation插件CMakeLists.txt生成成功
+          ) else (
+            echo 错误：CMakeLists.txt生成失败
+            exit 1
+          )
+        shell: cmd
+
+      # 步骤4：配置MSVC环境
       - name: Setup MSVC Environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      # 步骤4：安装依赖（cmake/ninja，原仓库编译必需）
+      # 步骤5：安装依赖（cmake/ninja）
       - name: Install dependencies
         run: |
           choco install cmake ninja -y
@@ -60,98 +101,109 @@ jobs:
           ninja --version
         shell: cmd
 
-      # 步骤5：编译（严格按原仓库build.cmd逻辑，修正CMake路径）
-      - name: Build Hikari-LLVM19 (Windows)
+      # 步骤6：生成LLVM编译配置（仅为插件编译做准备）
+      - name: Configure LLVM for Plugin Build
         run: |
           cd llvm-project
-          :: 生成build.cmd（完全匹配原仓库要求，修正CMake指向llvm子目录）
-          echo @echo off > build.cmd
-          echo :: 自动适配GitHub的VS环境，无需手动改vcvars64路径 >> build.cmd
-          echo call "%%VSINSTALLDIR%%\BuildTools\bin\Hostx64\x64\vcvars64.bat" >> build.cmd
-          echo mkdir build 2^>nul >> build.cmd
-          echo cd build >> build.cmd
-          echo :: CMake指向llvm子目录（LLVM官方编译方式） >> build.cmd
-          echo cmake -G Ninja ^
-          echo   -DCMAKE_BUILD_TYPE=Release ^
-          echo   -DCMAKE_CXX_STANDARD=17 ^
-          echo   -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^
-          echo   -DLLVM_ENABLE_PROJECTS="clang" ^
-          echo   -DLLVM_INCLUDE_TESTS=OFF ^
-          echo   -DLLVM_INCLUDE_EXAMPLES=OFF ^
-          echo   -DLLVM_INCLUDE_DOCS=OFF ^
-          echo   ..\llvm >> build.cmd
-          echo :: 低线程数适配GitHub资源 >> build.cmd
-          echo ninja -j2 >> build.cmd
-          :: 执行编译脚本
-          call build.cmd
+          mkdir build 2>nul
+          cd build
+          # CMake配置：仅启用必要模块，加速编译
+          cmake -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_CXX_STANDARD=17 ^
+            -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^
+            -DLLVM_ENABLE_PROJECTS="clang" ^
+            -DLLVM_INCLUDE_TESTS=OFF ^
+            -DLLVM_INCLUDE_EXAMPLES=OFF ^
+            -DLLVM_INCLUDE_DOCS=OFF ^
+            ..\llvm
         shell: cmd
 
-      # 步骤6：下载Android NDK r28（Windows版本，原仓库适配版）
+      # 步骤7：仅编译混淆插件（关键！替代编译整个clang.exe）
+      - name: Build Obfuscation Plugin Only
+        run: |
+          cd llvm-project\build
+          # 仅编译Obfuscation插件，耗时<5分钟
+          ninja Obfuscation
+          # 验证插件生成成功
+          if exist "lib\Obfuscation.dll" (
+            echo Obfuscation插件编译成功：lib\Obfuscation.dll
+          ) else (
+            echo 错误：Obfuscation插件编译失败
+            dir lib\
+            exit 1
+          )
+        shell: cmd
+
+      # 步骤8：下载Android NDK r28
       - name: Download Android NDK r28
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/android-ndk-${{ github.event.inputs.ndk_version }}-windows.zip" -OutFile "ndk.zip"
           Expand-Archive -Path "ndk.zip" -DestinationPath "."
         shell: powershell
 
-      # 步骤7：替换NDK（严格按原仓库文档，容错校验）
-      - name: Integrate Hikari into NDK r28
+      # 步骤9：复制插件到NDK目录（适配后续SO编译）
+      - name: Copy Obfuscation Plugin to NDK
         run: |
           $ndkPath = "android-ndk-${{ github.event.inputs.ndk_version }}"
-          $llvmPath = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64"
+          $pluginPath = "llvm-project/build/lib/Obfuscation.dll"
+          $ndkBinPath = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64/bin"
           
-          # 容错：先检查NDK目录是否存在
-          if (-not (Test-Path $llvmPath)) {
-            Write-Host "错误：NDK路径不存在 $llvmPath"
+          # 创建NDK bin目录（确保存在）
+          New-Item -ItemType Directory -Path $ndkBinPath -Force
+          # 复制插件到NDK
+          Copy-Item -Path $pluginPath -Destination $ndkBinPath -Force
+          
+          # 验证复制成功
+          if (Test-Path "$ndkBinPath/Obfuscation.dll") {
+            Write-Host "插件已复制到NDK：$ndkBinPath/Obfuscation.dll"
+          } else {
+            Write-Host "错误：插件复制失败"
             exit 1
           }
-          
-          # 备份原始文件
-          Copy-Item -Path "$llvmPath/bin" -Destination "$llvmPath/bin_original" -Recurse -Force -ErrorAction SilentlyContinue
-          Copy-Item -Path "$llvmPath/lib" -Destination "$llvmPath/lib_original" -Recurse -Force -ErrorAction SilentlyContinue
-          
-          # 按原仓库文档：复制build/bin和build/lib到NDK
-          if (Test-Path "llvm-project/build/bin") {
-            Copy-Item -Path "llvm-project/build/bin/*" -Destination "$llvmPath/bin/" -Recurse -Force
-            Write-Host "成功复制bin目录到NDK"
-          } else {
-            Write-Host "警告：llvm-project/build/bin目录不存在，编译可能失败"
-          }
-          if (Test-Path "llvm-project/build/lib") {
-            Copy-Item -Path "llvm-project/build/lib/*" -Destination "$llvmPath/lib/" -Recurse -Force
-            Write-Host "成功复制lib目录到NDK"
-          } else {
-            Write-Host "警告：llvm-project/build/lib目录不存在，编译可能失败"
-          }
-          
-          # 打包成品
-          Compress-Archive -Path $ndkPath -DestinationPath "hikari-llvm19-ndk${{ github.event.inputs.ndk_version }}-windows.zip"
         shell: powershell
 
-      # 步骤8：上传产物+创建Release
-      - name: Upload artifact
+      # 步骤10：编译你的Native SO（加载插件+混淆）
+      - name: Build Native SO with Obfuscation
+        run: |
+          $ndkPath = "android-ndk-${{ github.event.inputs.ndk_version }}"
+          $clangPath = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android28-clang++"
+          $pluginPath = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64/bin/Obfuscation.dll"
+          
+          # 编译SO（加载插件+指定混淆参数）
+          & $clangPath `
+            -O2 -shared -fPIC `
+            -load $pluginPath `
+            -mllvm -enable-subobf `
+            -mllvm -enable-strcry `
+            -mllvm -enable-cffobf `
+            -mllvm -cffobf-func-exclude=JNI_OnLoad `
+            native_secure.cpp `
+            -o libnative_secure.so
+          
+          # 验证SO生成成功
+          if (Test-Path "libnative_secure.so") {
+            Write-Host "Native SO编译成功：libnative_secure.so"
+          } else {
+            Write-Host "错误：SO编译失败"
+            exit 1
+          }
+        shell: powershell
+
+      # 步骤11：打包NDK+SO并上传
+      - name: Package and Upload Artifact
+        run: |
+          # 打包NDK（含插件）
+          Compress-Archive -Path "android-ndk-${{ github.event.inputs.ndk_version }}" -DestinationPath "hikari-llvm19-ndk${{ github.event.inputs.ndk_version }}-windows.zip"
+          # 打包SO
+          Compress-Archive -Path "libnative_secure.so" -DestinationPath "libnative_secure.zip"
+        shell: powershell
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hikari-llvm19-ndk${{ github.event.inputs.ndk_version }}-windows
-          path: hikari-*.zip
+          name: hikari-llvm19-ndk-r28-plugin
+          path: |
+            hikari-llvm19-ndk${{ github.event.inputs.ndk_version }}-windows.zip
+            libnative_secure.zip
           retention-days: 30
-
-      - name: Create release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: hikari-llvm19-ndk${{ github.event.inputs.ndk_version }}
-          name: Hikari-LLVM19 Android NDK ${{ github.event.inputs.ndk_version }} (Windows)
-          files: hikari-*.zip
-          body: |
-            ## Hikari-LLVM19 for Android NDK ${{ github.event.inputs.ndk_version }} (Windows)
-            基于 TinyTime-Joy/hikari-llvm19 编译，严格遵循官方文档步骤
-            ### 混淆参数（与原仓库一致）
-            - -mllvm -enable-allobf（全部启用）
-            - -mllvm -enable-bcfobf（虚假控制流）
-            - -mllvm -enable-cffobf（控制流平坦化）
-            - -mllvm -enable-splitobf（基本块分割）
-            - -mllvm -enable-subobf（指令替换）
-            - -mllvm -enable-indibran（间接跳转）
-            - -mllvm -enable-strcry（字符串加密）
-            - -mllvm -enable-funcwra（函数封装）
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

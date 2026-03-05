@@ -51,7 +51,7 @@ jobs:
             -DLLVM_INCLUDE_DOCS=OFF `
             -DLLVM_ENABLE_NEW_PASS_MANAGER=ON `
             -DLLVM_ENABLE_ASSERTIONS=OFF `
-            ../hikari
+            ../hikari `
           ninja -j2
         shell: cmd
 

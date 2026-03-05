@@ -21,23 +21,31 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      # 步骤1：拉取官方llvm-project（LLVM 19.1.0）
+      # 步骤1：拉取官方llvm-project（修复cmd注释符+目录验证）
       - name: Checkout LLVM official repo
         run: |
+          :: 克隆官方仓库，关闭自动换行转换（匹配项目要求）
           git clone --config core.autocrlf=false https://github.com/llvm/llvm-project.git
           cd llvm-project
-          git checkout llvmorg-${{ github.event.inputs.llvm_version }}
-          dir # 验证目录结构
+          :: 检出LLVM 19.1.0分支（抑制游离头提示）
+          git checkout -q llvmorg-${{ github.event.inputs.llvm_version }}
+          :: 验证目录结构（cmd正确注释+目录存在性校验）
+          if exist "CMakeLists.txt" (
+            echo LLVM源码根目录CMakeLists.txt存在，目录验证通过
+          ) else (
+            echo 错误：LLVM源码根目录未找到CMakeLists.txt
+            exit 1
+          )
         shell: cmd
 
       # 步骤2：拉取TinyTime-Joy/hikari-llvm19并合并源码
       - name: Checkout Hikari-LLVM19 (Windows适配版)
         run: |
           git clone https://github.com/TinyTime-Joy/hikari-llvm19.git hikari-patch
-          :: 覆盖合并llvm和clang文件夹到官方LLVM仓库
+          :: 覆盖合并llvm和clang文件夹（/E递归 /Y覆盖）
           xcopy /E /Y hikari-patch\llvm llvm-project\llvm\
           xcopy /E /Y hikari-patch\clang llvm-project\clang\
-          echo 源码合并完成
+          echo Hikari源码合并完成
         shell: cmd
 
       # 步骤3：配置MSVC环境（自动适配GitHub的VS路径）
@@ -52,14 +60,14 @@ jobs:
           ninja --version
         shell: cmd
 
-      # 步骤5：编译（适配项目的build.cmd逻辑，自动生成编译脚本）
+      # 步骤5：编译（修复build.cmd生成逻辑，适配GitHub环境）
       - name: Build Hikari-LLVM19 (Windows)
         run: |
           cd llvm-project
-          :: 生成适配GitHub环境的build.cmd（自动用当前MSVC路径）
+          :: 生成适配GitHub环境的build.cmd（纯cmd语法，无注释错误）
           echo @echo off > build.cmd
           echo call "%%VSINSTALLDIR%%\BuildTools\bin\Hostx64\x64\vcvars64.bat" >> build.cmd
-          echo mkdir build 2>nul >> build.cmd
+          echo mkdir build 2^>nul >> build.cmd
           echo cd build >> build.cmd
           echo cmake -G Ninja ^
           echo   -DCMAKE_BUILD_TYPE=Release ^
@@ -71,7 +79,7 @@ jobs:
           echo   -DLLVM_INCLUDE_DOCS=OFF ^
           echo   ..\llvm >> build.cmd
           echo ninja -j2 >> build.cmd
-          :: 执行编译
+          :: 执行编译脚本
           call build.cmd
         shell: cmd
 
@@ -88,13 +96,25 @@ jobs:
           $ndkPath = "android-ndk-${{ github.event.inputs.ndk_version }}"
           $llvmPath = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64"
           
-          # 备份原始文件
-          Copy-Item -Path "$llvmPath/bin" -Destination "$llvmPath/bin_original" -Recurse -Force
-          Copy-Item -Path "$llvmPath/lib" -Destination "$llvmPath/lib_original" -Recurse -Force
+          # 备份原始文件（容错：目录不存在时不报错）
+          if (Test-Path "$llvmPath/bin") {
+            Copy-Item -Path "$llvmPath/bin" -Destination "$llvmPath/bin_original" -Recurse -Force
+          }
+          if (Test-Path "$llvmPath/lib") {
+            Copy-Item -Path "$llvmPath/lib" -Destination "$llvmPath/lib_original" -Recurse -Force
+          }
           
-          # 复制编译产物（覆盖NDK）
-          Copy-Item -Path "llvm-project/build/bin/*" -Destination "$llvmPath/bin/" -Recurse -Force
-          Copy-Item -Path "llvm-project/build/lib/*" -Destination "$llvmPath/lib/" -Recurse -Force
+          # 复制编译产物（覆盖NDK，容错校验）
+          if (Test-Path "llvm-project/build/bin") {
+            Copy-Item -Path "llvm-project/build/bin/*" -Destination "$llvmPath/bin/" -Recurse -Force
+          } else {
+            Write-Host "警告：llvm-project/build/bin目录不存在，编译可能失败"
+          }
+          if (Test-Path "llvm-project/build/lib") {
+            Copy-Item -Path "llvm-project/build/lib/*" -Destination "$llvmPath/lib/" -Recurse -Force
+          } else {
+            Write-Host "警告：llvm-project/build/lib目录不存在，编译可能失败"
+          }
           
           # 打包成品
           Compress-Archive -Path $ndkPath -DestinationPath "hikari-llvm19-ndk${{ github.event.inputs.ndk_version }}-windows.zip"

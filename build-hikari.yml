@@ -13,7 +13,7 @@ on:
         default: '19'
         type: choice
         options:
-          - '19'  # 仅保留该仓库适配的LLVM版本
+          - '19'  # 仅保留适配的LLVM 19版本
 
 jobs:
   build:
@@ -21,12 +21,12 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      # 修复1：拉取有效源码仓库（包含CMakeLists.txt）
-      - name: Checkout Hikari-LLVM (有效源码仓库)
+      # 修复1：拉取包含CMakeLists.txt的有效源码仓库
+      - name: Checkout Hikari-LLVM
         run: |
-          :: 拉取适配LLVM19的Hikari仓库，取消浅克隆确保文件完整
+          :: 拉取适配LLVM19的Hikari仓库（含CMakeLists.txt）
           git clone https://github.com/Aethereux/Hikari-LLVM19.git hikari
-          :: 验证核心编译文件是否存在（确保拉取成功）
+          :: 验证核心编译文件是否存在
           if not exist "hikari/CMakeLists.txt" (
             echo 错误：未找到CMakeLists.txt，源码拉取失败
             exit 1
@@ -43,10 +43,10 @@ jobs:
           ninja --version
         shell: cmd
 
-      # 修复2：cmd续行符+绝对路径+低线程数（适配Windows环境）
-      - name: Build Hikari-LLVM (语法/路径修复)
+      # 修复2：解决cmd续行符、路径、线程数问题
+      - name: Build Hikari-LLVM
         run: |
-          :: 切换到GitHub工作根目录，避免相对路径错误
+          :: 切换到工作根目录，确保路径正确
           cd %GITHUB_WORKSPACE%
           mkdir build
           cd build
@@ -61,26 +61,29 @@ jobs:
             -DLLVM_ENABLE_NEW_PASS_MANAGER=ON ^
             -DLLVM_ENABLE_ASSERTIONS=OFF ^
             %GITHUB_WORKSPACE%/hikari
-          :: 降低线程数，适配GitHub服务器资源
+          :: 降低线程数适配GitHub服务器资源
           ninja -j2
         shell: cmd
 
+      # 修复3：明确指定shell为powershell，避免语法冲突
       - name: Download Android NDK
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/android-ndk-${{ github.event.inputs.ndk_version }}-windows.zip" -OutFile "ndk.zip"
           Expand-Archive -Path "ndk.zip" -DestinationPath "."
         shell: powershell
 
+      # 修复4：添加容错校验，避免编译失败后流程终止
       - name: Integrate Hikari into NDK
         run: |
           $ndkPath = "android-ndk-${{ github.event.inputs.ndk_version }}"
           $llvmPath = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64"
           
-          # 备份原始文件
+          # Backup original files
           Copy-Item -Path "$llvmPath/bin" -Destination "$llvmPath/bin_original" -Recurse
           
-          # 复制Hikari编译产物（容错校验）
+          # 容错：检查编译产物是否存在
           if (Test-Path "build/bin") {
+            # Copy Hikari binaries
             Copy-Item -Path "build/bin/clang.exe" -Destination "$llvmPath/bin/" -Force
             Copy-Item -Path "build/bin/clang++.exe" -Destination "$llvmPath/bin/" -Force
             Copy-Item -Path "build/bin/clang-cl.exe" -Destination "$llvmPath/bin/" -Force
@@ -89,12 +92,12 @@ jobs:
             Write-Host "警告：build/bin目录不存在，编译可能失败"
           }
           
-          # 复制LLVM库文件
+          # Copy LLVM libraries (容错)
           if (Test-Path "build/lib") {
             Copy-Item -Path "build/lib/*.lib" -Destination "$llvmPath/lib/" -Force -ErrorAction SilentlyContinue
           }
           
-          # 打包NDK
+          # Compress NDK
           Compress-Archive -Path $ndkPath -DestinationPath "hikari-llvm${{ github.event.inputs.llvm_version }}-ndk-${{ github.event.inputs.ndk_version }}-windows.zip"
         shell: powershell
 

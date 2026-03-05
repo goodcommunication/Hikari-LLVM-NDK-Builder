@@ -8,13 +8,13 @@ on:
         required: true
         default: 'r27d'
       llvm_version:
-        description: 'LLVM Version (18 for NDK r27d, 20 for latest)'
+        description: 'LLVM Version (17/19, match Hikari branch)'
         required: true
-        default: '18'
+        default: '17'
         type: choice
         options:
-          - '18'
-          - '20'
+          - '17'
+          - '19'
 
 jobs:
   build:
@@ -22,14 +22,14 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      # 修复1：拉取正确分支（llvm18）+ 完整源码 + cmd注释语法
-      - name: Checkout Hikari-LLVM (正确分支+完整源码)
+      # 修复：拉取官方存在的分支（llvm17/llvm19）+ cmd正确注释
+      - name: Checkout Hikari-LLVM (适配官方真实分支)
         run: |
-          :: 拉取Hikari llvm18分支（包含CMakeLists.txt），取消depth 1确保文件完整
-          git clone --branch llvm18 https://github.com/HikariObfuscator/Hikari.git hikari
-          :: 验证CMakeLists.txt是否存在
+          :: 拉取Hikari官方存在的分支（llvm17/llvm19），取消浅克隆确保文件完整
+          git clone --branch llvm${{ github.event.inputs.llvm_version }} https://github.com/HikariObfuscator/Hikari.git hikari
+          :: 验证核心编译文件是否存在
           if not exist "hikari/CMakeLists.txt" (
-            echo 错误：Hikari源码缺失CMakeLists.txt，请检查分支是否正确
+            echo 错误：Hikari源码缺失CMakeLists.txt，分支${{ github.event.inputs.llvm_version }}可能无该文件
             exit 1
           )
         shell: cmd
@@ -44,12 +44,11 @@ jobs:
           ninja --version
         shell: cmd
 
-      # 修复2：cmd续行符^ + 绝对路径 + 降低线程数
-      - name: Build Hikari-LLVM (修复语法+路径+线程数)
+      # 修复：cmd续行符^ + 绝对路径 + 低线程数
+      - name: Build Hikari-LLVM (适配cmd语法+路径)
         run: |
-          :: 切换到GitHub工作根目录
+          :: 切换到GitHub工作根目录，避免相对路径错误
           cd %GITHUB_WORKSPACE%
-          :: 创建并进入build目录
           mkdir build
           cd build
           :: CMake命令（cmd续行符用^，绝对路径定位源码）
@@ -63,11 +62,10 @@ jobs:
             -DLLVM_ENABLE_NEW_PASS_MANAGER=ON ^
             -DLLVM_ENABLE_ASSERTIONS=OFF ^
             %GITHUB_WORKSPACE%/hikari
-          :: 降低线程数适配服务器资源
+          :: 降低线程数，适配GitHub服务器资源
           ninja -j2
         shell: cmd
 
-      # 保留PowerShell语法（该步骤原本就是PowerShell，无需改）
       - name: Download Android NDK
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/android-ndk-${{ github.event.inputs.ndk_version }}-windows.zip" -OutFile "ndk.zip"

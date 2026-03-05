@@ -1,4 +1,4 @@
-name: Minimal Hikari Plugin Build (No PowerShell, Pure CMD)
+name: Minimal Hikari Plugin Build (Final Fix)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     defaults:
       run:
         shell: cmd
@@ -36,13 +36,36 @@ jobs:
           if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" exit 1
           echo Hikari patch merged.
 
-      - name: Generate CMakeLists.txt (CMD Only)
+      # 核心修复：用PowerShell生成标准格式的CMake文件
+      - name: Generate CMakeLists.txt (PowerShell)
+        shell: powershell
         run: |
-          echo. > llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
-          echo add_llvm_pass_plugin(Obfuscation Obfuscation.cpp BogusControlFlow.cpp ControlFlowFlattening.cpp StringEncryption.cpp Substitute.cpp Utils.cpp SplitBasicBlocks.cpp IndirectBranch.cpp FunctionWrapper.cpp) > llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
-          echo target_link_libraries(Obfuscation PRIVATE LLVMIRReader LLVMCore LLVMSupport LLVMTransformUtils LLVMAnalysis) >> llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
-          if not exist "llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt" exit 1
-          echo CMakeLists.txt generated.
+          $cmake = @"
+add_llvm_pass_plugin(Obfuscation
+  Obfuscation.cpp
+  BogusControlFlow.cpp
+  ControlFlowFlattening.cpp
+  StringEncryption.cpp
+  Substitute.cpp
+  Utils.cpp
+  SplitBasicBlocks.cpp
+  IndirectBranch.cpp
+  FunctionWrapper.cpp
+)
+
+target_link_libraries(Obfuscation
+  PRIVATE
+  LLVMIRReader
+  LLVMCore
+  LLVMSupport
+  LLVMTransformUtils
+  LLVMAnalysis
+)
+"@
+          $path = "llvm-project/llvm/lib/Transforms/Obfuscation/CMakeLists.txt"
+          Set-Content -Path $path -Value $cmake -Encoding UTF8
+          if (-not (Test-Path $path)) { exit 1 }
+          Write-Host "CMakeLists.txt generated."
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -69,39 +92,19 @@ jobs:
             -DLLVM_INCLUDE_EXAMPLES=OFF ^
             -DLLVM_INCLUDE_DOCS=OFF ^
             -DLLVM_BUILD_PLUGINS=ON ^
-            -DLLVM_ENABLE_PIC=ON ^
-            -DLLVM_ENABLE_BINDINGS=OFF ^
-            -DLLVM_ENABLE_THREADS=OFF ^
-            -DLLVM_ENABLE_LIBXML2=OFF ^
-            -DLLVM_ENABLE_ZLIB=OFF ^
             ..\llvm
           exit 0
 
-      # 仅修改这一步：新增目录树打印，排查插件实际位置
       - name: Build Obfuscation Plugin
         run: |
           cd llvm-project\build
           ninja Obfuscation
-          :: 打印完整的lib目录树（所有文件路径），定位插件位置
           dir /s /b lib\*
-          :: 多维度检查插件文件（适配不同文件名/路径）
-          if exist "lib\Obfuscation.dll" (
-            echo SUCCESS: Obfuscation.dll 生成在 lib\ 根目录！
-            dir lib\Obfuscation.dll
-            exit 0
-          ) else if exist "lib\Obfuscation.lib" (
-            echo SUCCESS: Obfuscation.lib 生成在 lib\ 根目录！
-            dir lib\Obfuscation.lib
-            exit 0
-          ) else if exist "lib\Transforms\Obfuscation\Obfuscation.dll" (
-            echo SUCCESS: Obfuscation.dll 生成在 lib\Transforms\Obfuscation\ 子目录！
-            dir lib\Transforms\Obfuscation\Obfuscation.dll
-            exit 0
-          ) else if exist "lib\Transforms\Obfuscation\Obfuscation.lib" (
-            echo SUCCESS: Obfuscation.lib 生成在 lib\Transforms\Obfuscation\ 子目录！
-            dir lib\Transforms\Obfuscation\Obfuscation.lib
+          if exist "lib/Transforms/Obfuscation/Obfuscation.lib" (
+            echo SUCCESS: Obfuscation.lib built!
+            dir lib/Transforms/Obfuscation/Obfuscation.lib
             exit 0
           ) else (
-            echo ERROR: 未找到 Obfuscation 插件文件！
+            echo ERROR: Obfuscation plugin not found!
             exit 1
           )

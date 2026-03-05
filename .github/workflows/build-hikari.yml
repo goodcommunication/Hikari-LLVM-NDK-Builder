@@ -1,12 +1,8 @@
-name: Build Hikari-LLVM19 (Plugin Mode) for Android NDK r28
+name: Minimal Hikari Plugin Build (Debug Only)
 
 on:
   workflow_dispatch:
     inputs:
-      ndk_version:
-        description: 'Android NDK Version'
-        required: true
-        default: 'r28'
       llvm_version:
         description: 'LLVM Version'
         required: true
@@ -18,40 +14,32 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 180
+    timeout-minutes: 120
     defaults:
       run:
         shell: cmd
 
     steps:
-      - name: Checkout LLVM Official Repository
+      - name: Checkout LLVM
         run: |
-          :: 克隆LLVM源码（指定版本）
           git clone --config core.autocrlf=false https://github.com/llvm/llvm-project.git
           cd llvm-project
           git checkout -q llvmorg-${{ github.event.inputs.llvm_version }}
-          if not exist "llvm/CMakeLists.txt" (
-            echo ERROR: LLVM core CMakeLists.txt not found!
-            exit 1
-          )
-          echo LLVM source code checkout completed.
+          if not exist "llvm/CMakeLists.txt" exit 1
+          echo LLVM checkout done.
 
-      - name: Checkout and Merge Hikari Patch
+      - name: Merge Hikari Patch
         run: |
-          :: 克隆Hikari补丁仓库
           git clone https://github.com/TinyTime-Joy/hikari-llvm19.git hikari-patch
           xcopy /E /Y /I hikari-patch\llvm\* llvm-project\llvm\
           xcopy /E /Y /I hikari-patch\clang\* llvm-project\clang\
-          if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" (
-            echo ERROR: Hikari Obfuscation directory not found!
-            exit 1
-          )
-          echo Hikari patch merged successfully.
+          if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" exit 1
+          echo Hikari patch merged.
 
-      - name: Generate Obfuscation Plugin CMakeLists.txt
+      - name: Generate CMakeLists.txt (PowerShell)
         shell: powershell
         run: |
-          $cmakeContent = @"
+          $c = @"
 add_llvm_pass_plugin(Obfuscation
   Obfuscation.cpp
   BogusControlFlow.cpp
@@ -72,42 +60,24 @@ target_link_libraries(Obfuscation
   LLVMTransformUtils
   LLVMAnalysis
 )
-
-if (WIN32)
-  set_target_properties(Obfuscation PROPERTIES
-    LINK_FLAGS "/DELAYLOAD:llvm-c.dll"
-    SUFFIX ".dll"
-  )
-endif()
 "@
-          $cmakePath = "llvm-project/llvm/lib/Transforms/Obfuscation/CMakeLists.txt"
-          Set-Content -Path $cmakePath -Value $cmakeContent -Encoding UTF8
-          if (-not (Test-Path $cmakePath)) {
-            Write-Error "ERROR: CMakeLists.txt generation failed!"
-            exit 1
-          }
-          Write-Host "Generated CMakeLists.txt content:"
-          Get-Content $cmakePath
-          Write-Host "✅ Obfuscation Plugin CMakeLists.txt generated successfully."
+          $p = "llvm-project/llvm/lib/Transforms/Obfuscation/CMakeLists.txt"
+          Set-Content -Path $p -Value $c -Encoding UTF8
+          if (-not (Test-Path $p)) { exit 1 }
+          Get-Content $p
 
-      - name: Setup MSVC Development Environment
+      - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Install Build Dependencies
+      - name: Install CMake/Ninja
         run: |
-          :: 静默安装CMake和Ninja
-          choco install cmake ninja -y --no-progress --force
+          choco install cmake ninja -y --no-progress
           cmake --version
           ninja --version
-          if errorlevel 1 (
-            echo ERROR: CMake/Ninja installation failed!
-            exit 1
-          )
-          echo Dependencies installed successfully.
 
-      - name: Configure LLVM Build
+      - name: Configure LLVM (Minimal)
         run: |
           cd llvm-project
           mkdir build 2>nul
@@ -115,64 +85,14 @@ endif()
           cmake -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_CXX_STANDARD=17 ^
-            -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^
+            -DLLVM_TARGETS_TO_BUILD="X86" ^
             -DLLVM_ENABLE_PROJECTS="clang" ^
             -DLLVM_INCLUDE_TESTS=OFF ^
             -DLLVM_INCLUDE_EXAMPLES=OFF ^
             -DLLVM_INCLUDE_DOCS=OFF ^
             -DLLVM_BUILD_PLUGINS=ON ^
             ..\llvm
-          if errorlevel 1 (
-            echo ERROR: LLVM CMake configuration failed!
-            exit 1
-          )
-          echo LLVM configuration completed.
+          if errorlevel 1 exit 1
+          echo LLVM configure passed!
 
-      - name: Build Obfuscation Plugin Only
-        run: |
-          cd llvm-project\build
-          ninja Obfuscation
-          if not exist "lib\Obfuscation.dll" (
-            echo ERROR: Obfuscation.dll build failed!
-            dir lib\
-            exit 1
-          )
-          echo ✅ Obfuscation Plugin built successfully: lib\Obfuscation.dll
-
-      - name: Download Android NDK r28
-        shell: powershell
-        run: |
-          $ndkUrl = "https://dl.google.com/android/repository/android-ndk-${{ github.event.inputs.ndk_version }}-windows.zip"
-          $ndkZip = "ndk.zip"
-          Invoke-WebRequest -Uri $ndkUrl -OutFile $ndkZip -UseBasicParsing -Resume
-          Expand-Archive -Path $ndkZip -DestinationPath "." -Force
-          $ndkPath = "android-ndk-${{ github.event.inputs.ndk_version }}"
-          if (-not (Test-Path "$ndkPath/toolchains/llvm")) {
-            Write-Error "ERROR: NDK LLVM toolchain not found!"
-            exit 1
-          }
-          Write-Host "✅ NDK downloaded and extracted successfully."
-
-      - name: Copy Plugin to NDK
-        shell: powershell
-        run: |
-          $ndkPath = "android-ndk-${{ github.event.inputs.ndk_version }}"
-          $pluginSrc = "llvm-project/build/lib/Obfuscation.dll"
-          $pluginDst = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64/bin/"
-          New-Item -Path $pluginDst -ItemType Directory -Force | Out-Null
-          Copy-Item -Path $pluginSrc -Destination $pluginDst -Force
-          if (-not (Test-Path "$pluginDst/Obfuscation.dll")) {
-            Write-Error "ERROR: Plugin copy to NDK failed!"
-            exit 1
-          }
-          Write-Host "✅ Obfuscation Plugin copied to NDK: $pluginDst"
-
-      - name: Package and Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: hikari-llvm19-plugin-ndk-r28-windows
-          path: |
-            android-ndk-${{ github.event.inputs.ndk_version }}/**/*
-            llvm-project/build/lib/Obfuscation.dll
-          retention-days: 30
-          if-no-files-found: error
+      # 先不编译插件，先确保CMake能过

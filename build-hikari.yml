@@ -22,14 +22,14 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      - name: Checkout Hikari-LLVM (完整拉取源码)
+      # 修复1：拉取正确分支（llvm18）+ 完整源码 + cmd注释语法
+      - name: Checkout Hikari-LLVM (正确分支+完整源码)
         run: |
-          # 拉取完整仓库（取消depth 1，确保CMakeLists.txt存在）
-          git clone --branch master https://github.com/HikariObfuscator/Hikari.git hikari
-          # 验证源码目录文件（关键：检查CMakeLists.txt是否存在）
-          dir hikari
+          :: 拉取Hikari llvm18分支（包含CMakeLists.txt），取消depth 1确保文件完整
+          git clone --branch llvm18 https://github.com/HikariObfuscator/Hikari.git hikari
+          :: 验证CMakeLists.txt是否存在
           if not exist "hikari/CMakeLists.txt" (
-            echo "错误：Hikari源码缺失CMakeLists.txt"
+            echo 错误：Hikari源码缺失CMakeLists.txt，请检查分支是否正确
             exit 1
           )
         shell: cmd
@@ -44,14 +44,15 @@ jobs:
           ninja --version
         shell: cmd
 
-      - name: Build Hikari-LLVM (修复路径+适配cmd语法)
+      # 修复2：cmd续行符^ + 绝对路径 + 降低线程数
+      - name: Build Hikari-LLVM (修复语法+路径+线程数)
         run: |
-          # 切换到仓库根目录（确保路径正确）
+          :: 切换到GitHub工作根目录
           cd %GITHUB_WORKSPACE%
-          # 创建build目录并进入
+          :: 创建并进入build目录
           mkdir build
           cd build
-          # 使用绝对路径指定源码目录，cmd续行符用^
+          :: CMake命令（cmd续行符用^，绝对路径定位源码）
           cmake -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^
@@ -62,10 +63,11 @@ jobs:
             -DLLVM_ENABLE_NEW_PASS_MANAGER=ON ^
             -DLLVM_ENABLE_ASSERTIONS=OFF ^
             %GITHUB_WORKSPACE%/hikari
-          # 降低线程数，避免资源耗尽
+          :: 降低线程数适配服务器资源
           ninja -j2
         shell: cmd
 
+      # 保留PowerShell语法（该步骤原本就是PowerShell，无需改）
       - name: Download Android NDK
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/android-ndk-${{ github.event.inputs.ndk_version }}-windows.zip" -OutFile "ndk.zip"

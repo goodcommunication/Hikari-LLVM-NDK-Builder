@@ -82,11 +82,15 @@ jobs:
             ..\llvm
           exit 0
 
+      # 仅修改这一步：强制忽略ninja报错，确保打印目录树
       - name: Build Obfuscation Plugin
         run: |
           cd llvm-project\build
-          ninja Obfuscation
+          :: 核心修改：|| true 强制忽略ninja编译错误，继续执行后续命令
+          ninja Obfuscation || true
+          :: 打印完整lib目录树，查看编译产物
           dir /s /b lib\*
+          :: 检查插件文件
           if exist "lib\Transforms\Obfuscation\Obfuscation.lib" (
             echo SUCCESS: Obfuscation.lib built!
             dir lib\Transforms\Obfuscation\Obfuscation.lib

@@ -36,14 +36,10 @@ jobs:
           if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" exit 1
           echo Hikari patch merged.
 
-      # 核心：用 CMD 逐行写入，彻底避免 YAML/PowerShell 语法问题
       - name: Generate CMakeLists.txt (CMD Only)
         run: |
-          :: 清空文件
           echo. > llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
-          :: 第1行
           echo add_llvm_pass_plugin(Obfuscation Obfuscation.cpp BogusControlFlow.cpp ControlFlowFlattening.cpp StringEncryption.cpp Substitute.cpp Utils.cpp SplitBasicBlocks.cpp IndirectBranch.cpp FunctionWrapper.cpp) > llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
-          :: 第2行
           echo target_link_libraries(Obfuscation PRIVATE LLVMIRReader LLVMCore LLVMSupport LLVMTransformUtils LLVMAnalysis) >> llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
           if not exist "llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt" exit 1
           echo CMakeLists.txt generated.
@@ -59,7 +55,7 @@ jobs:
           cmake --version
           ninja --version
 
-      - name: Configure LLVM (Skip Unnecessary Dependencies)
+      - name: Configure LLVM
         run: |
           cd llvm-project
           mkdir build 2>nul
@@ -73,33 +69,28 @@ jobs:
             -DLLVM_INCLUDE_EXAMPLES=OFF ^
             -DLLVM_INCLUDE_DOCS=OFF ^
             -DLLVM_BUILD_PLUGINS=ON ^
-            :: 新增：跳过Windows下缺失的Linux依赖
             -DLLVM_ENABLE_PIC=ON ^
             -DLLVM_ENABLE_BINDINGS=OFF ^
             -DLLVM_ENABLE_THREADS=OFF ^
             -DLLVM_ENABLE_LIBXML2=OFF ^
             -DLLVM_ENABLE_ZLIB=OFF ^
             ..\llvm
-          :: 修改：即使配置有警告也不退出，继续尝试编译插件
           if errorlevel 1 (
-            echo WARNING: LLVM配置有非必要依赖缺失，继续编译插件...
+            echo WARNING: LLVM configure has warnings, proceeding to build plugin...
           ) else (
             echo LLVM configure passed!
           )
 
-      # 新增：直接编译Obfuscation插件
       - name: Build Obfuscation Plugin
         run: |
           cd llvm-project\build
-          :: 仅编译混淆插件，忽略LLVM整体配置的非必要错误
           ninja Obfuscation
-          :: 校验插件是否生成
           if exist "lib\Obfuscation.dll" (
-            echo ✅ Obfuscation.dll 编译成功！
-            dir lib\Obfuscation.dll
+            echo SUCCESS: Obfuscation.dll built!
+            dir lib\
             exit 0
           ) else (
-            echo ❌ Obfuscation.dll 编译失败，打印lib目录排查：
+            echo ERROR: Obfuscation.dll not found!
             dir lib\
             exit 1
           )

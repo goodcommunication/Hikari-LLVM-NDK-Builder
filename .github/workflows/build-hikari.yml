@@ -1,4 +1,4 @@
-name: Minimal Hikari Plugin Build (Debug Only)
+name: Minimal Hikari Plugin Build (No PowerShell, Pure CMD)
 
 on:
   workflow_dispatch:
@@ -36,35 +36,17 @@ jobs:
           if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" exit 1
           echo Hikari patch merged.
 
-      - name: Generate CMakeLists.txt (PowerShell)
-        shell: powershell
+      # 核心：用 CMD 逐行写入，彻底避免 YAML/PowerShell 语法问题
+      - name: Generate CMakeLists.txt (CMD Only)
         run: |
-          $c = @"
-    add_llvm_pass_plugin(Obfuscation
-      Obfuscation.cpp
-      BogusControlFlow.cpp
-      ControlFlowFlattening.cpp
-      StringEncryption.cpp
-      Substitute.cpp
-      Utils.cpp
-      SplitBasicBlocks.cpp
-      IndirectBranch.cpp
-      FunctionWrapper.cpp
-    )
-
-    target_link_libraries(Obfuscation
-      PRIVATE
-      LLVMIRReader
-      LLVMCore
-      LLVMSupport
-      LLVMTransformUtils
-      LLVMAnalysis
-    )
-"@
-          $p = "llvm-project/llvm/lib/Transforms/Obfuscation/CMakeLists.txt"
-          Set-Content -Path $p -Value $c -Encoding UTF8
-          if (-not (Test-Path $p)) { exit 1 }
-          Get-Content $p
+          :: 清空文件
+          echo. > llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
+          :: 第1行
+          echo add_llvm_pass_plugin(Obfuscation Obfuscation.cpp BogusControlFlow.cpp ControlFlowFlattening.cpp StringEncryption.cpp Substitute.cpp Utils.cpp SplitBasicBlocks.cpp IndirectBranch.cpp FunctionWrapper.cpp) > llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
+          :: 第2行
+          echo target_link_libraries(Obfuscation PRIVATE LLVMIRReader LLVMCore LLVMSupport LLVMTransformUtils LLVMAnalysis) >> llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
+          if not exist "llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt" exit 1
+          echo CMakeLists.txt generated.
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1

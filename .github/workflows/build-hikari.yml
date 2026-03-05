@@ -21,15 +21,26 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      # 修复1：拉取包含CMakeLists.txt的有效源码仓库
+      # 修复1：拉取有效仓库 + 修正CMakeLists.txt校验逻辑（适配子目录）
       - name: Checkout Hikari-LLVM
         run: |
-          :: 拉取适配LLVM19的Hikari仓库（含CMakeLists.txt）
+          :: 拉取适配LLVM19的Hikari仓库
           git clone https://github.com/Aethereux/Hikari-LLVM19.git hikari
-          :: 验证核心编译文件是否存在
-          if not exist "hikari/CMakeLists.txt" (
-            echo 错误：未找到CMakeLists.txt，源码拉取失败
-            exit 1
+          :: 校验仓库中是否存在CMakeLists.txt（遍历子目录，不限制根目录）
+          dir hikari\CMakeLists.txt /s
+          if not exist "hikari\CMakeLists.txt" (
+            :: 检查子目录是否有CMakeLists.txt
+            for /r hikari %%f in (CMakeLists.txt) do (
+              set "CMAKE_FILE=%%f"
+              goto :found
+            )
+            :found
+            if not defined CMAKE_FILE (
+              echo 错误：仓库中未找到任何CMakeLists.txt文件
+              exit 1
+            ) else (
+              echo 找到CMakeLists.txt：%CMAKE_FILE%
+            )
           )
         shell: cmd
 
@@ -43,14 +54,14 @@ jobs:
           ninja --version
         shell: cmd
 
-      # 修复2：解决cmd续行符、路径、线程数问题
+      # 修复2：修正cmake源码路径 + cmd续行符 + 低线程数
       - name: Build Hikari-LLVM
         run: |
           :: 切换到工作根目录，确保路径正确
           cd %GITHUB_WORKSPACE%
           mkdir build
           cd build
-          :: CMake命令（cmd续行符用^，绝对路径定位源码）
+          :: CMake命令（cmd续行符用^，指向仓库根目录）
           cmake -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^

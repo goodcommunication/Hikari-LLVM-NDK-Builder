@@ -40,26 +40,26 @@ jobs:
         shell: powershell
         run: |
           $c = @"
-add_llvm_pass_plugin(Obfuscation
-  Obfuscation.cpp
-  BogusControlFlow.cpp
-  ControlFlowFlattening.cpp
-  StringEncryption.cpp
-  Substitute.cpp
-  Utils.cpp
-  SplitBasicBlocks.cpp
-  IndirectBranch.cpp
-  FunctionWrapper.cpp
-)
+    add_llvm_pass_plugin(Obfuscation
+      Obfuscation.cpp
+      BogusControlFlow.cpp
+      ControlFlowFlattening.cpp
+      StringEncryption.cpp
+      Substitute.cpp
+      Utils.cpp
+      SplitBasicBlocks.cpp
+      IndirectBranch.cpp
+      FunctionWrapper.cpp
+    )
 
-target_link_libraries(Obfuscation
-  PRIVATE
-  LLVMIRReader
-  LLVMCore
-  LLVMSupport
-  LLVMTransformUtils
-  LLVMAnalysis
-)
+    target_link_libraries(Obfuscation
+      PRIVATE
+      LLVMIRReader
+      LLVMCore
+      LLVMSupport
+      LLVMTransformUtils
+      LLVMAnalysis
+    )
 "@
           $p = "llvm-project/llvm/lib/Transforms/Obfuscation/CMakeLists.txt"
           Set-Content -Path $p -Value $c -Encoding UTF8
@@ -77,7 +77,7 @@ target_link_libraries(Obfuscation
           cmake --version
           ninja --version
 
-      - name: Configure LLVM (Minimal)
+      - name: Configure LLVM
         run: |
           cd llvm-project
           mkdir build 2>nul

@@ -1,19 +1,19 @@
-name: Build Hikari-LLVM for Android NDK (Windows)
+name: Build Hikari-LLVM19 for Android NDK r28 (Windows)
 
 on:
   workflow_dispatch:
     inputs:
       ndk_version:
-        description: 'Android NDK Version (e.g., r27d)'
+        description: 'Android NDK Version (适配r28)'
         required: true
-        default: 'r27d'
+        default: 'r28'
       llvm_version:
-        description: 'LLVM Version (适配Hikari-LLVM19仓库)'
+        description: 'LLVM Version'
         required: true
-        default: '19'
+        default: '19.1.0'
         type: choice
         options:
-          - '19'  # 仅保留适配的LLVM 19版本
+          - '19.1.0'
 
 jobs:
   build:
@@ -21,112 +21,110 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      # 修复1：拉取PPKunOfficial/Hikari-LLVM19（根目录有CMakeLists.txt）
-      - name: Checkout Hikari-LLVM
+      # 步骤1：拉取官方llvm-project（LLVM 19.1.0）
+      - name: Checkout LLVM official repo
         run: |
-          :: 拉取完整仓库，确保根目录CMakeLists.txt下载完整
-          git clone https://github.com/PPKunOfficial/Hikari-LLVM19.git hikari
-          :: 校验根目录核心编译文件（解决CMake入口问题）
-          if not exist "hikari/CMakeLists.txt" (
-            echo 错误：仓库根目录未找到CMakeLists.txt，请检查仓库
-            exit 1
-          ) else (
-            echo 成功找到根目录CMakeLists.txt，编译入口有效
-          )
+          git clone --config core.autocrlf=false https://github.com/llvm/llvm-project.git
+          cd llvm-project
+          git checkout llvmorg-${{ github.event.inputs.llvm_version }}
+          dir # 验证目录结构
         shell: cmd
 
-      - name: Setup MSVC
+      # 步骤2：拉取TinyTime-Joy/hikari-llvm19并合并源码
+      - name: Checkout Hikari-LLVM19 (Windows适配版)
+        run: |
+          git clone https://github.com/TinyTime-Joy/hikari-llvm19.git hikari-patch
+          :: 覆盖合并llvm和clang文件夹到官方LLVM仓库
+          xcopy /E /Y hikari-patch\llvm llvm-project\llvm\
+          xcopy /E /Y hikari-patch\clang llvm-project\clang\
+          echo 源码合并完成
+        shell: cmd
+
+      # 步骤3：配置MSVC环境（自动适配GitHub的VS路径）
+      - name: Setup MSVC Environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      # 步骤4：安装依赖（cmake/ninja）
       - name: Install dependencies
         run: |
-          choco install cmake ninja python3 -y
+          choco install cmake ninja -y
           cmake --version
           ninja --version
         shell: cmd
 
-      # 修复2：适配LLVM19编译参数 + cmd语法 + 绝对路径
-      - name: Build Hikari-LLVM (适配LLVM19编译配置)
+      # 步骤5：编译（适配项目的build.cmd逻辑，自动生成编译脚本）
+      - name: Build Hikari-LLVM19 (Windows)
         run: |
-          :: 切换到GitHub工作根目录，确保路径正确
-          cd %GITHUB_WORKSPACE%
-          mkdir build
-          cd build
-          :: CMake命令（适配LLVM19编译参数 + cmd续行符^ + 绝对路径）
-          cmake -G Ninja ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_CXX_STANDARD=17 ^  # 适配LLVM19的C++17标准
-            -DBUILD_SHARED_LIBS=ON ^    # 编译动态库（适配混淆插件加载）
-            -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^
-            -DLLVM_ENABLE_PROJECTS="clang" ^
-            -DLLVM_INCLUDE_TESTS=OFF ^
-            -DLLVM_INCLUDE_EXAMPLES=OFF ^
-            -DLLVM_INCLUDE_DOCS=OFF ^
-            -DLLVM_ENABLE_NEW_PASS_MANAGER=ON ^
-            -DLLVM_ENABLE_ASSERTIONS=OFF ^
-            %GITHUB_WORKSPACE%/hikari
-          :: 降低线程数，适配GitHub服务器资源
-          ninja -j2
+          cd llvm-project
+          :: 生成适配GitHub环境的build.cmd（自动用当前MSVC路径）
+          echo @echo off > build.cmd
+          echo call "%%VSINSTALLDIR%%\BuildTools\bin\Hostx64\x64\vcvars64.bat" >> build.cmd
+          echo mkdir build 2>nul >> build.cmd
+          echo cd build >> build.cmd
+          echo cmake -G Ninja ^
+          echo   -DCMAKE_BUILD_TYPE=Release ^
+          echo   -DCMAKE_CXX_STANDARD=17 ^
+          echo   -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" ^
+          echo   -DLLVM_ENABLE_PROJECTS="clang" ^
+          echo   -DLLVM_INCLUDE_TESTS=OFF ^
+          echo   -DLLVM_INCLUDE_EXAMPLES=OFF ^
+          echo   -DLLVM_INCLUDE_DOCS=OFF ^
+          echo   ..\llvm >> build.cmd
+          echo ninja -j2 >> build.cmd
+          :: 执行编译
+          call build.cmd
         shell: cmd
 
-      # 修复3：下载NDK（明确powershell语法）
-      - name: Download Android NDK
+      # 步骤6：下载Android NDK r28（Windows版本）
+      - name: Download Android NDK r28
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/android-ndk-${{ github.event.inputs.ndk_version }}-windows.zip" -OutFile "ndk.zip"
           Expand-Archive -Path "ndk.zip" -DestinationPath "."
         shell: powershell
 
-      # 修复4：NDK集成（容错校验 + 适配动态库）
-      - name: Integrate Hikari into NDK
+      # 步骤7：替换NDK的bin/lib目录（按项目说明）
+      - name: Integrate Hikari into NDK r28
         run: |
           $ndkPath = "android-ndk-${{ github.event.inputs.ndk_version }}"
           $llvmPath = "$ndkPath/toolchains/llvm/prebuilt/windows-x86_64"
           
           # 备份原始文件
-          Copy-Item -Path "$llvmPath/bin" -Destination "$llvmPath/bin_original" -Recurse
+          Copy-Item -Path "$llvmPath/bin" -Destination "$llvmPath/bin_original" -Recurse -Force
+          Copy-Item -Path "$llvmPath/lib" -Destination "$llvmPath/lib_original" -Recurse -Force
           
-          # 复制编译产物（适配动态库+可执行文件）
-          if (Test-Path "build/bin") {
-            # 复制可执行文件
-            Copy-Item -Path "build/bin/clang.exe" -Destination "$llvmPath/bin/" -Force
-            Copy-Item -Path "build/bin/clang++.exe" -Destination "$llvmPath/bin/" -Force
-            # 复制动态库（Hikari混淆插件核心）
-            Copy-Item -Path "build/bin/Hikari.dll" -Destination "$llvmPath/bin/" -Force -ErrorAction SilentlyContinue
-            Copy-Item -Path "build/lib/Hikari.lib" -Destination "$llvmPath/lib/" -Force -ErrorAction SilentlyContinue
-          } else {
-            Write-Host "警告：build/bin目录不存在，编译可能失败"
-          }
+          # 复制编译产物（覆盖NDK）
+          Copy-Item -Path "llvm-project/build/bin/*" -Destination "$llvmPath/bin/" -Recurse -Force
+          Copy-Item -Path "llvm-project/build/lib/*" -Destination "$llvmPath/lib/" -Recurse -Force
           
-          # 打包NDK
-          Compress-Archive -Path $ndkPath -DestinationPath "hikari-llvm${{ github.event.inputs.llvm_version }}-ndk-${{ github.event.inputs.ndk_version }}-windows.zip"
+          # 打包成品
+          Compress-Archive -Path $ndkPath -DestinationPath "hikari-llvm19-ndk${{ github.event.inputs.ndk_version }}-windows.zip"
         shell: powershell
 
+      # 步骤8：上传产物+创建Release
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hikari-llvm${{ github.event.inputs.llvm_version }}-ndk-windows
+          name: hikari-llvm19-ndk${{ github.event.inputs.ndk_version }}-windows
           path: hikari-*.zip
           retention-days: 30
 
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: hikari-llvm${{ github.event.inputs.llvm_version }}-ndk-${{ github.event.inputs.ndk_version }}
-          name: Hikari-LLVM${{ github.event.inputs.llvm_version }} Android NDK ${{ github.event.inputs.ndk_version }}
+          tag_name: hikari-llvm19-ndk${{ github.event.inputs.ndk_version }}
+          name: Hikari-LLVM19 Android NDK ${{ github.event.inputs.ndk_version }} (Windows)
           files: hikari-*.zip
           body: |
-            ## Hikari-LLVM${{ github.event.inputs.llvm_version }} for Android NDK ${{ github.event.inputs.ndk_version }}
-            
-            ### 混淆功能
-            - 控制流平坦化 (`-mllvm -fla`)
-            - 指令替换 (`-mllvm -sub`)
-            - 虚假控制流 (`-mllvm -bcf`)
-            - 字符串加密 (`-mllvm -sobf`)
-            - 常量加密 (`-mllvm -constenc`)
-            - 反调试 (`-mllvm -antidbg`)
-            
-            ### 使用方法
-            1. 解压到项目目录
-            2. 运行 `.\build_hikari.ps1 -HikariNdkPath ".\android-ndk-${{ github.event.inputs.ndk_version }}"`
+            ## Hikari-LLVM19 for Android NDK ${{ github.event.inputs.ndk_version }} (Windows)
+            基于 TinyTime-Joy/hikari-llvm19 编译，适配Windows环境
+            ### 混淆参数
+            - -mllvm -enable-allobf（全部启用）
+            - -mllvm -enable-bcfobf（虚假控制流）
+            - -mllvm -enable-cffobf（控制流平坦化）
+            - -mllvm -enable-splitobf（基本块分割）
+            - -mllvm -enable-subobf（指令替换）
+            - -mllvm -enable-indibran（间接跳转）
+            - -mllvm -enable-strcry（字符串加密）
+            - -mllvm -enable-funcwra（函数封装）
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

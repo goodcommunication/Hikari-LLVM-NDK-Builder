@@ -28,6 +28,10 @@ jobs:
           git clone https://github.com/Aethereux/Hikari-LLVM19.git hikari-patch
           xcopy /E /Y /I hikari-patch\clang llvm-project\clang
           xcopy /E /Y /I hikari-patch\llvm llvm-project\llvm
+          # 强制删除 amdgpu-arch 目录，彻底避开冲突
+          rmdir /S /Q "llvm-project\clang\tools\amdgpu-arch"
+          # 验证删除结果
+          dir "llvm-project\clang\tools\"
           if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" (
             echo "❌ Hikari patch merge failed! Obfuscation directory not found."
             exit 1

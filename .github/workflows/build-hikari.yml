@@ -1,101 +1,92 @@
-name: Minimal Hikari Plugin Build (Final No YAML Error)
+name: Build Hikari LLVM19 (Windows)
+
+permissions:
+  contents: read
 
 on:
-  workflow_dispatch:
-    inputs:
-      llvm_version:
-        description: 'LLVM Version'
-        required: true
-        default: '19.1.0'
-        type: choice
-        options:
-          - '19.1.0'
+  workflow_dispatch:  # 手动触发
+  push:
+    branches: [ main ]
+    paths: [ '.github/workflows/build-hikari.yml' ]
 
 jobs:
-  build:
+  build-hikari:
     runs-on: windows-latest
     timeout-minutes: 180
-    defaults:
-      run:
-        shell: cmd
 
     steps:
-      - name: Checkout LLVM
-        run: |
-          git clone --config core.autocrlf=false https://github.com/llvm/llvm-project.git
-          cd llvm-project
-          git checkout -q llvmorg-${{ github.event.inputs.llvm_version }}
-          if not exist "llvm/CMakeLists.txt" exit 1
-          echo LLVM checkout done.
+      - name: Checkout LLVM 19.1.0
+        uses: actions/checkout@v4
+        with:
+          repository: llvm/llvm-project
+          ref: llvmorg-19.1.0
+          path: llvm-project
 
       - name: Merge Hikari Patch
         run: |
-          git clone https://github.com/TinyTime-Joy/hikari-llvm19.git hikari-patch
-          xcopy /E /Y /I hikari-patch\llvm\* llvm-project\llvm\
-          xcopy /E /Y /I hikari-patch\clang\* llvm-project\clang\
-          if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" exit 1
-          echo Hikari patch merged.
+          # 克隆 Hikari-LLVM19 补丁
+          git clone https://github.com/Aethereux/Hikari-LLVM19.git hikari-patch
+          # 覆盖合并 clang 和 llvm 目录
+          xcopy /E /Y /I hikari-patch\clang llvm-project\clang
+          xcopy /E /Y /I hikari-patch\llvm llvm-project\llvm
+          # 验证 Obfuscation 目录是否存在
+          if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" (
+            echo "Hikari patch merge failed!"
+            exit 1
+          )
+          echo "Hikari patch merged successfully!"
 
-      # 核心：用 CMD 逐行 echo 写入，彻底避免 YAML/PS 语法问题
-      - name: Generate CMakeLists.txt (CMD Only)
-        run: |
-          echo. > llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
-          echo add_llvm_pass_plugin(Obfuscation ^
-            Obfuscation.cpp ^
-            BogusControlFlow.cpp ^
-            ControlFlowFlattening.cpp ^
-            StringEncryption.cpp ^
-            Substitute.cpp ^
-            Utils.cpp ^
-            SplitBasicBlocks.cpp ^
-            IndirectBranch.cpp ^
-            FunctionWrapper.cpp) > llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
-          echo target_link_libraries(Obfuscation PRIVATE LLVMIRReader LLVMCore LLVMSupport LLVMTransformUtils LLVMAnalysis) >> llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt
-          if not exist "llvm-project\llvm\lib\Transforms\Obfuscation\CMakeLists.txt" exit 1
-          echo CMakeLists.txt generated.
-
-      - name: Setup MSVC
+      - name: Setup MSVC Build Tools
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Install CMake/Ninja
+      - name: Install CMake and Ninja
         run: |
           choco install cmake ninja -y --no-progress
-          cmake --version
-          ninja --version
+          echo "CMAKE_ROOT=C:\Program Files\CMake" >> $GITHUB_ENV
+          echo "NINJA_ROOT=C:\ProgramData\chocolatey\bin" >> $GITHUB_ENV
+          refreshenv
 
-      - name: Configure LLVM
+      - name: Configure LLVM with CMake
+        working-directory: llvm-project
         run: |
-          cd llvm-project
-          mkdir build 2>nul
+          mkdir build
           cd build
           cmake -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_CXX_STANDARD=17 ^
-            -DLLVM_TARGETS_TO_BUILD="X86" ^
-            -DLLVM_ENABLE_PROJECTS="clang" ^
+            -DLLVM_TARGETS_TO_BUILD=X86 ^
+            -DLLVM_ENABLE_PROJECTS=clang ^
             -DLLVM_INCLUDE_TESTS=OFF ^
             -DLLVM_INCLUDE_EXAMPLES=OFF ^
             -DLLVM_INCLUDE_DOCS=OFF ^
             -DLLVM_BUILD_PLUGINS=ON ^
+            -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON ^
             ..\llvm
-          exit 0
+          exit 0  # 忽略非必要的 CMake 警告/错误
 
-      # 仅修改这一步：强制忽略ninja报错，确保打印目录树
       - name: Build Obfuscation Plugin
+        working-directory: llvm-project/build
         run: |
-          cd llvm-project\build
-          :: 核心修改：|| true 强制忽略ninja编译错误，继续执行后续命令
+          # 编译插件，忽略编译错误以打印目录树
           ninja Obfuscation || true
-          :: 打印完整lib目录树，查看编译产物
+          # 打印完整目录树，查看编译产物
           dir /s /b lib\*
-          :: 检查插件文件
+          # 检查插件文件是否生成
           if exist "lib\Transforms\Obfuscation\Obfuscation.lib" (
-            echo SUCCESS: Obfuscation.lib built!
+            echo "✅ Hikari plugin built successfully!"
             dir lib\Transforms\Obfuscation\Obfuscation.lib
             exit 0
           ) else (
-            echo ERROR: Obfuscation plugin not found!
+            echo "❌ Hikari plugin build failed!"
             exit 1
           )
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: hikari-llvm19-plugin
+          path: llvm-project/build/lib/Transforms/Obfuscation/
+          retention-days: 7

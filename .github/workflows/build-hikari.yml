@@ -12,7 +12,7 @@ on:
 jobs:
   build-hikari:
     runs-on: windows-latest
-    timeout-minutes: 180
+    timeout-minutes: 240  # 延长超时时间，适配多架构编译
 
     steps:
       - name: Checkout LLVM 19.1.0
@@ -49,7 +49,7 @@ jobs:
           cmake --version
           ninja --version
 
-      - name: Configure LLVM with CMake
+      - name: Configure LLVM with CMake (Official Hikari Params)
         shell: cmd
         working-directory: llvm-project
         run: |
@@ -57,23 +57,31 @@ jobs:
           cd build
           cmake -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_CXX_STANDARD=17 ^
-            -DLLVM_TARGETS_TO_BUILD=X86 ^
-            -DLLVM_ENABLE_PROJECTS=clang ^
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded ^
+            -DCMAKE_CXX_FLAGS="/MT" ^
+            -DLLVM_ENABLE_PROJECTS="clang" ^
+            -DLLVM_TARGETS_TO_BUILD="X86;ARM;AArch64" ^
+            -DLLVM_ENABLE_ZSTD=OFF ^
             -DLLVM_INCLUDE_TESTS=OFF ^
             -DLLVM_INCLUDE_EXAMPLES=OFF ^
-            -DLLVM_INCLUDE_DOCS=OFF ^
+            -DLLVM_INCLUDE_UTILS=OFF ^
+            -DLLVM_INCLUDE_BENCHMARKS=OFF ^
+            -DLLVM_BUILD_TOOLS=OFF ^
             -DLLVM_BUILD_PLUGINS=ON ^
             -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON ^
             ..\llvm
           exit 0
 
-      - name: Build Obfuscation Plugin
+      - name: Build Obfuscation Plugin (Verbose Log)
         shell: cmd
         working-directory: llvm-project/build
         run: |
-          ninja Obfuscation || true
+          # 详细打印编译日志，方便定位错误
+          ninja Obfuscation -v > ninja-build.log 2>&1
+          type ninja-build.log
+          # 打印产物目录
           dir /s /b lib\*
+          # 检查最终插件文件
           if exist "lib\Transforms\Obfuscation\Obfuscation.lib" (
             echo "✅ Hikari plugin built successfully!"
             dir lib\Transforms\Obfuscation\Obfuscation.lib
@@ -89,4 +97,12 @@ jobs:
         with:
           name: hikari-llvm19-plugin
           path: llvm-project/build/lib/Transforms/Obfuscation/
+          retention-days: 7
+          
+      - name: Upload Build Log (For Debug)
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ninja-build-log
+          path: llvm-project/build/ninja-build.log
           retention-days: 7

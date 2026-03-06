@@ -60,7 +60,7 @@ jobs:
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded ^
             -DCMAKE_CXX_FLAGS="/MT" ^
             -DLLVM_ENABLE_PROJECTS="clang" ^
-            -DLLVM_TARGETS_TO_BUILD="X86" ^  # 仅修改这一行：只保留X86架构
+            -DLLVM_TARGETS_TO_BUILD="X86" ^
             -DLLVM_ENABLE_ZSTD=OFF ^
             -DLLVM_INCLUDE_TESTS=OFF ^
             -DLLVM_INCLUDE_EXAMPLES=OFF ^

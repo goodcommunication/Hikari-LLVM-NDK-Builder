@@ -23,14 +23,11 @@ jobs:
           path: llvm-project
 
       - name: Merge Hikari Patch
-        shell: cmd  # 强制使用CMD执行，避免PowerShell语法冲突
+        shell: cmd
         run: |
-          # 克隆 Hikari-LLVM19 补丁
           git clone https://github.com/Aethereux/Hikari-LLVM19.git hikari-patch
-          # 覆盖合并 clang 和 llvm 目录（/E递归 /Y覆盖 /I确认目录）
           xcopy /E /Y /I hikari-patch\clang llvm-project\clang
           xcopy /E /Y /I hikari-patch\llvm llvm-project\llvm
-          # 验证 Obfuscation 核心目录是否存在
           if not exist "llvm-project\llvm\lib\Transforms\Obfuscation" (
             echo "❌ Hikari patch merge failed! Obfuscation directory not found."
             exit 1
@@ -43,26 +40,21 @@ jobs:
           arch: x64
 
       - name: Install CMake and Ninja
-        shell: cmd  # 强制使用CMD执行
+        shell: cmd
         run: |
-          # 静默安装CMake和Ninja
           choco install cmake ninja -y --no-progress
-          # 配置环境变量
           echo "CMAKE_ROOT=C:\Program Files\CMake" >> %GITHUB_ENV%
           echo "NINJA_ROOT=C:\ProgramData\chocolatey\bin" >> %GITHUB_ENV%
           refreshenv
-          # 验证安装
           cmake --version
           ninja --version
 
       - name: Configure LLVM with CMake
-        shell: cmd  # 强制使用CMD执行
+        shell: cmd
         working-directory: llvm-project
         run: |
-          # 创建编译目录
           if not exist "build" mkdir build
           cd build
-          # CMake配置LLVM（适配Hikari编译）
           cmake -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_CXX_STANDARD=17 ^
@@ -74,17 +66,14 @@ jobs:
             -DLLVM_BUILD_PLUGINS=ON ^
             -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON ^
             ..\llvm
-          exit 0  # 忽略非必要的CMake警告/错误
+          exit 0
 
       - name: Build Obfuscation Plugin
-        shell: cmd  # 强制使用CMD执行
+        shell: cmd
         working-directory: llvm-project/build
         run: |
-          # 编译Obfuscation插件（|| true忽略编译错误，保证后续命令执行）
           ninja Obfuscation || true
-          # 打印完整lib目录树，查看编译产物
           dir /s /b lib\*
-          # 检查插件文件是否生成
           if exist "lib\Transforms\Obfuscation\Obfuscation.lib" (
             echo "✅ Hikari plugin built successfully!"
             dir lib\Transforms\Obfuscation\Obfuscation.lib
